@@ -131,14 +131,31 @@ def parse_query(
     )
 
     results = []
+    total_songs = len(songs)
+    progress_interval = max(1, total_songs // 10)
+
+    if total_songs > 0:
+        logger.info(
+            "Fetching metadata for %d song%s",
+            total_songs,
+            "" if total_songs == 1 else "s",
+        )
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
         future_to_song = {executor.submit(reinit_song, song): song for song in songs}
-        for future in concurrent.futures.as_completed(future_to_song):
+        for index, future in enumerate(
+            concurrent.futures.as_completed(future_to_song), start=1
+        ):
             song = future_to_song[future]
             try:
                 results.append(future.result())
             except Exception as exc:
                 logger.error("%s generated an exception: %s", song.display_name, exc)
+
+            if total_songs >= 10 and (
+                index == total_songs or index % progress_interval == 0
+            ):
+                logger.info("Fetched metadata for %d/%d songs", index, total_songs)
 
     return results
 

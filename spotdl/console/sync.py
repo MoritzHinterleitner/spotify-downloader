@@ -62,6 +62,7 @@ def sync(
         )
 
         # Create sync file
+        logger.info("Saving sync file to %s", save_path)
         with open(save_path, "w", encoding="utf-8") as save_file:
             json.dump(
                 {
@@ -73,6 +74,7 @@ def sync(
                 indent=4,
                 ensure_ascii=False,
             )
+        logger.info("Saved sync file with %d songs", len(songs_list))
 
         # Perform initial download
         downloader.download_multiple_songs(songs_list)
@@ -239,6 +241,7 @@ def sync(
             )
 
         # Write the new sync file
+        logger.info("Updating sync file %s", query[0])
         with open(query[0], "w", encoding="utf-8") as save_file:
             json.dump(
                 {
@@ -250,6 +253,7 @@ def sync(
                 indent=4,
                 ensure_ascii=False,
             )
+        logger.info("Updated sync file with %d songs", len(songs_playlist))
 
         downloader.download_multiple_songs(songs_playlist)
 
