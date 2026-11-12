@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from spotdl.types.playlist import Playlist
@@ -108,6 +110,35 @@ def test_get_simple_songs_skips_missing_video_details(monkeypatch):
     songs = get_simple_songs(["https://music.youtube.com/watch?v=dQw4w9WgXcQ"])
 
     assert songs == []
+
+
+def test_parse_query_preserves_song_order(monkeypatch):
+    songs = [
+        Song.from_missing_data(
+            name=f"Song {index}",
+            artists=["Artist"],
+            artist="Artist",
+            song_id=str(index),
+            url=f"https://open.spotify.com/track/{index}",
+        )
+        for index in range(10)
+    ]
+
+    monkeypatch.setattr(
+        "spotdl.utils.search.get_simple_songs",
+        lambda *_args, **_kwargs: songs,
+    )
+
+    def fake_reinit_song(song):
+        # Make later songs finish before earlier ones
+        time.sleep(0.01 * (10 - int(song.name.split()[-1])))
+        return song
+
+    monkeypatch.setattr("spotdl.utils.search.reinit_song", fake_reinit_song)
+
+    result = parse_query(["ignored"], threads=4)
+
+    assert [song.name for song in result] == [song.name for song in songs]
 
 
 def test_custom_mapping_does_not_duplicate_playlist_songs(monkeypatch):

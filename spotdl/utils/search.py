@@ -131,7 +131,7 @@ def parse_query(
         playlist_retain_track_cover=playlist_retain_track_cover,
     )
 
-    results = []
+    results: List[Optional[Song]] = [None] * len(songs)
     total_songs = len(songs)
     start_time = time.monotonic()
 
@@ -143,7 +143,10 @@ def parse_query(
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-        future_to_song = {executor.submit(reinit_song, song): song for song in songs}
+        future_to_song = {
+            executor.submit(reinit_song, song): (index, song)
+            for index, song in enumerate(songs)
+        }
         remaining = set(future_to_song)
         completed = 0
         last_progress_log = start_time
@@ -156,9 +159,9 @@ def parse_query(
             )
 
             for future in done:
-                song = future_to_song[future]
+                index, song = future_to_song[future]
                 try:
-                    results.append(future.result())
+                    results[index] = future.result()
                 except Exception as exc:
                     logger.error(
                         "%s generated an exception: %s", song.display_name, exc
@@ -179,7 +182,7 @@ def parse_query(
                 )
                 last_progress_log = now
 
-    return results
+    return [song for song in results if song is not None]
 
 
 def get_simple_songs(
