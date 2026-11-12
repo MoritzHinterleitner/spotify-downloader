@@ -1,4 +1,5 @@
 from spotdl.providers.audio.youtube import YouTube
+from spotdl.types.result import Result
 from spotdl.types.song import Song
 
 
@@ -79,6 +80,7 @@ def test_yt_get_results(mocker):
     assert results[0].url == "https://www.youtube.com/watch?v=video_0"
     assert results[0].duration == 180
     assert results[0].author == "Lost Identities"
+    assert results[0].artists == ("Lost Identities",)
 
 
 def test_yt_get_results_normalizes_null_metadata(mocker):
@@ -105,3 +107,98 @@ def test_yt_get_results_normalizes_null_metadata(mocker):
     assert results[0].duration == 0
     assert results[0].author == ""
     assert results[0].views == 0
+    assert results[0].artists is None
+
+
+def test_yt_get_results_cleans_channel_names(mocker):
+    mocker.patch(
+        "spotdl.providers.audio.youtube.YoutubeDL.extract_info",
+        return_value={
+            "entries": [
+                {
+                    "id": "video_0",
+                    "title": "Test Song",
+                    "duration": 100,
+                    "uploader": "Test Artist - Topic",
+                    "view_count": 1000,
+                },
+                {
+                    "id": "video_1",
+                    "title": "Another Song",
+                    "duration": 100,
+                    "uploader": "Another ArtistVEVO",
+                    "view_count": 1000,
+                },
+            ]
+        },
+    )
+
+    provider = YouTube()
+    results = provider.get_results("Test Song")
+
+    assert results[0].artists == ("Test Artist",)
+    assert results[1].artists == ("Another Artist",)
+
+
+def test_yt_get_best_result_prefers_popular_upload(mocker):
+    mocker.patch("spotdl.providers.audio.youtube.YoutubeDL.extract_info")
+    provider = YouTube()
+
+    obscure = Result(
+        source="YouTube",
+        url="https://www.youtube.com/watch?v=obscure",
+        verified=False,
+        name="Abstrakt - Nobody Else",
+        duration=162,
+        author="Random Uploads",
+        artists=("Random Uploads",),
+        views=500,
+        result_id="obscure",
+    )
+    official = Result(
+        source="YouTube",
+        url="https://www.youtube.com/watch?v=official",
+        verified=False,
+        name="Abstrakt - Nobody Else",
+        duration=162,
+        author="Abstrakt",
+        artists=("Abstrakt",),
+        views=10_000_000,
+        result_id="official",
+    )
+
+    best_result, _ = provider.get_best_result({obscure: 100.0, official: 90.0})
+
+    assert best_result == official
+
+
+def test_yt_get_best_result_keeps_higher_match_when_views_are_equal(mocker):
+    mocker.patch("spotdl.providers.audio.youtube.YoutubeDL.extract_info")
+    provider = YouTube()
+
+    better_match = Result(
+        source="YouTube",
+        url="https://www.youtube.com/watch?v=better",
+        verified=False,
+        name="Abstrakt - Nobody Else",
+        duration=162,
+        author="Abstrakt",
+        artists=("Abstrakt",),
+        views=1000,
+        result_id="better",
+    )
+    worse_match = Result(
+        source="YouTube",
+        url="https://www.youtube.com/watch?v=worse",
+        verified=False,
+        name="Abstrakt - Nobody Else (Live)",
+        duration=162,
+        author="Abstrakt",
+        artists=("Abstrakt",),
+        views=1000,
+        result_id="worse",
+    )
+
+    best_result, _ = provider.get_best_result({better_match: 95.0, worse_match: 85.0})
+
+    assert best_result == better_match

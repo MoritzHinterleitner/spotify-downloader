@@ -5,6 +5,7 @@ Base audio provider module.
 import logging
 import re
 import shlex
+from math import log10
 from typing import Any, Dict, List, Optional, Tuple
 
 from yt_dlp import YoutubeDL
@@ -75,6 +76,12 @@ class AudioProvider:
 
     SUPPORTS_ISRC: bool
     GET_RESULTS_OPTS: List[Dict[str, Any]]
+
+    # Results within this many score points of the best match are considered
+    # when breaking ties by popularity.
+    RESULT_SCORE_RANGE: float = 8
+    # Maximum score bonus given to the most viewed result.
+    VIEW_SCORE_WEIGHT: float = 15
 
     def __init__(
         self,
@@ -340,7 +347,7 @@ class AudioProvider:
         - The best match URL and its score
         """
 
-        best_results = get_best_matches(results, 8)
+        best_results = get_best_matches(results, self.RESULT_SCORE_RANGE)
 
         # If we have only one result, return it
         if len(best_results) == 1:
@@ -354,34 +361,37 @@ class AudioProvider:
         if best_result[1] > 80 and best_result[0].isrc_search:
             return best_result[0], best_result[1]
 
-        # If we have more than one result,
-        # return the one with the highest score
-        # and most views
+        # If we have more than one result, choose between the closest matches
+        # using their popularity. Logarithmic scaling keeps a huge view count
+        # from completely overriding the match score, while still strongly
+        # preferring official uploads over results with only a few views.
         if len(best_results) > 1:
             views: List[int] = []
-            for best_result in best_results:
-                if best_result[0].views:
-                    views.append(best_result[0].views)
+            for candidate in best_results:
+                if candidate[0].views:
+                    views.append(candidate[0].views)
                 else:
-                    views.append(self.get_views(best_result[0].url))
+                    views.append(self.get_views(candidate[0].url))
 
             highest_views = max(views)
-            lowest_views = min(views)
-
-            if highest_views in (0, lowest_views):
+            if highest_views <= 0:
                 return best_result[0], best_result[1]
 
+            highest_views_log = log10(highest_views + 1)
             weighted_results: List[Tuple[Result, float]] = []
-            for index, best_result in enumerate(best_results):
-                result_views = views[index]
+            for index, candidate in enumerate(best_results):
+                result_views = max(views[index], 0)
                 views_score = (
-                    (result_views - lowest_views) / (highest_views - lowest_views)
-                ) * 15
-                score = min(best_result[1] + views_score, 100)
-                weighted_results.append((best_result[0], score))
+                    log10(result_views + 1) / highest_views_log
+                ) * self.VIEW_SCORE_WEIGHT
+                weighted_results.append((candidate[0], candidate[1] + views_score))
 
-            # Now we return the result with the highest score
-            return max(weighted_results, key=lambda x: x[1])
+            weighted_best_result = max(weighted_results, key=lambda x: x[1])
+
+            return (
+                weighted_best_result[0],
+                min(weighted_best_result[1], 100.0),
+            )
 
         return best_result[0], best_result[1]
 
