@@ -284,6 +284,14 @@ class ProgressHandler:
                 )
                 self.previous_overall = self.overall_completed_tasks
 
+    def refresh(self) -> None:
+        """
+        Refresh the progress display so status changes are visible immediately.
+        """
+
+        if not self.simple_tui:
+            self.rich_progress_bar.refresh()
+
     def get_new_tracker(self, song: Song) -> "SongTracker":
         """
         Get a new progress tracker.

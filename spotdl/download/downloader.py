@@ -286,10 +286,29 @@ class Downloader:
         logger.debug("Downloading %d songs", len(songs))
 
         if self.settings["archive"]:
+            original_count = len(songs)
             songs = [song for song in songs if song.url not in self.url_archive]
+            skipped_count = original_count - len(songs)
             logger.debug("Filtered %d songs with archive", len(songs))
 
+            if skipped_count:
+                logger.info(
+                    "Skipping %d song%s already in the archive",
+                    skipped_count,
+                    "" if skipped_count == 1 else "s",
+                )
+
+        if len(songs) > 0:
+            logger.info(
+                "Preparing %d song%s for download",
+                len(songs),
+                "" if len(songs) == 1 else "s",
+            )
+        else:
+            logger.info("No new songs to download")
+
         self.progress_handler.set_song_count(len(songs))
+        self.progress_handler.refresh()
 
         # Create tasks list
         tasks = [self.pool_download(song) for song in songs]
