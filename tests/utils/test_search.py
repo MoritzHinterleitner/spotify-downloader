@@ -141,6 +141,65 @@ def test_parse_query_preserves_song_order(monkeypatch):
     assert [song.name for song in result] == [song.name for song in songs]
 
 
+def test_parse_query_reuses_existing_song_metadata(monkeypatch):
+    old_url = "https://open.spotify.com/track/old"
+    new_url = "https://open.spotify.com/track/new"
+    existing = Song.from_missing_data(
+        name="Old Song",
+        artists=["Artist"],
+        artist="Artist",
+        genres=["metal"],
+        disc_count=2,
+        disc_number=1,
+        song_id="old",
+        url=old_url,
+    )
+    current_songs = [
+        Song.from_missing_data(
+            name="Old Song",
+            artists=["Artist"],
+            artist="Artist",
+            song_id="old",
+            url=old_url,
+            list_name="Playlist",
+            list_position=1,
+            list_length=2,
+        ),
+        Song.from_missing_data(
+            name="New Song",
+            artists=["Artist"],
+            artist="Artist",
+            song_id="new",
+            url=new_url,
+            list_name="Playlist",
+            list_position=2,
+            list_length=2,
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "spotdl.utils.search.get_simple_songs",
+        lambda *_args, **_kwargs: current_songs,
+    )
+
+    reinitialized = []
+
+    def fake_reinit_song(song):
+        reinitialized.append(song.url)
+        return song
+
+    monkeypatch.setattr("spotdl.utils.search.reinit_song", fake_reinit_song)
+
+    result = parse_query(["ignored"], existing_songs={old_url: existing})
+
+    assert reinitialized == [new_url]
+    assert [song.url for song in result] == [old_url, new_url]
+    assert result[0].genres == ["metal"]
+    assert result[0].disc_count == 2
+    assert result[0].list_name == "Playlist"
+    assert result[0].list_position == 1
+
+
 def test_custom_mapping_does_not_duplicate_playlist_songs(monkeypatch):
     track_url = "https://open.spotify.com/track/4B2kkxg3wKSTZw5JPaUtzQ"
     mapped_url = "https://www.youtube.com/watch?v=BZKwsPIhVO8"

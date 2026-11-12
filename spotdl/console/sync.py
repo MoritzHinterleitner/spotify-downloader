@@ -110,6 +110,13 @@ def sync(
         ):
             raise ValueError("Sync file is not a valid sync file.")
 
+        # Reuse metadata from the previous sync instead of requesting it again
+        existing_songs = {
+            entry["url"]: Song.from_dict(entry)
+            for entry in sync_data["songs"]
+            if entry.get("url")
+        }
+
         # Parse the query
         songs_playlist = parse_query(
             query=sync_data["query"],
@@ -120,19 +127,20 @@ def sync(
             playlist_retain_track_cover=downloader.settings[
                 "playlist_retain_track_cover"
             ],
+            existing_songs=existing_songs,
         )
 
         # Get the names and URLs of previously downloaded songs from the sync file
         old_files = []
-        for entry in sync_data["songs"]:
+        for old_song in existing_songs.values():
             file_name = create_file_name(
-                Song.from_dict(entry),
+                old_song,
                 downloader.settings["output"],
                 downloader.settings["format"],
                 downloader.settings["restrict"],
             )
 
-            old_files.append((file_name, entry["url"]))
+            old_files.append((file_name, old_song.url))
 
         new_urls = [song.url for song in songs_playlist]
 

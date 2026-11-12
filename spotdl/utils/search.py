@@ -11,7 +11,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 from ytmusicapi import YTMusic
@@ -104,6 +104,29 @@ def _get_spotify_song_key(song: Song) -> Optional[str]:
     return song.url
 
 
+def _merge_song_metadata(existing_song: Song, current_song: Song) -> Song:
+    """
+    Merge current playlist data into previously fetched song metadata.
+
+    Fields that are missing from the simple playlist data keep their existing
+    values, while playlist fields such as position/name are updated.
+
+    ### Arguments
+    - existing_song: previously stored song with full metadata
+    - current_song: fresh song data from the playlist
+
+    ### Returns
+    - merged song
+    """
+
+    song_data = existing_song.json
+    for key, value in current_song.json.items():
+        if value is not None:
+            song_data[key] = value
+
+    return Song.from_dict(song_data)
+
+
 def parse_query(
     query: List[str],
     threads: int = 1,
@@ -111,6 +134,7 @@ def parse_query(
     playlist_numbering: bool = False,
     album_type=None,
     playlist_retain_track_cover: bool = False,
+    existing_songs: Optional[Dict[str, Song]] = None,
 ) -> List[Song]:
     """
     Parse query and return list containing song object
@@ -118,6 +142,7 @@ def parse_query(
     ### Arguments
     - query: List of strings containing query
     - threads: Number of threads to use
+    - existing_songs: Previously fetched songs, used to skip metadata requests
 
     ### Returns
     - List of song objects
@@ -132,20 +157,36 @@ def parse_query(
     )
 
     results: List[Optional[Song]] = [None] * len(songs)
-    total_songs = len(songs)
+    songs_to_reinit: List[Tuple[int, Song]] = []
+
+    for index, song in enumerate(songs):
+        existing_song = (
+            existing_songs.get(song.url) if existing_songs is not None else None
+        )
+
+        if existing_song is not None:
+            results[index] = _merge_song_metadata(existing_song, song)
+        else:
+            songs_to_reinit.append((index, song))
+
+    total_songs = len(songs_to_reinit)
     start_time = time.monotonic()
 
     if total_songs > 0:
         logger.info(
-            "Fetching metadata for %d song%s",
+            "Fetching metadata for %d new song%s",
             total_songs,
             "" if total_songs == 1 else "s",
+        )
+    elif songs:
+        logger.info(
+            "Reused metadata for %d song%s", len(songs), "s" if len(songs) != 1 else ""
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
         future_to_song = {
             executor.submit(reinit_song, song): (index, song)
-            for index, song in enumerate(songs)
+            for index, song in songs_to_reinit
         }
         remaining = set(future_to_song)
         completed = 0
