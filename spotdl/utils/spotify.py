@@ -10,7 +10,9 @@ spotify.Spotify.init(client_id, client_secret)
 
 import json
 import logging
-from typing import Any, Dict, Optional
+import threading
+import time
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 from spotipy import Spotify
@@ -33,6 +35,47 @@ OFFICIAL_API_ONLY_OPTIONS = {
     "user_auth": "--user-auth",
     "use_cache_file": "--use-cache-file",
 }
+
+SPOTAPI_SECRET_CACHE_TTL = 15 * 60
+
+
+def _cache_spotapi_fallback_secret() -> None:
+    """
+    Cache the SpotipyFree/spotapi TOTP secret even when fetching it fails.
+
+    spotapi only caches successfully fetched secrets. If code.thetadev.de is
+    unreachable, every Spotify request retries the fetch and waits for its
+    5-second timeout. Caching the fallback secret avoids that repeated stall.
+    """
+
+    try:
+        from spotapi import client as spotapi_client  # pylint: disable=C0415
+    except ImportError:
+        return
+
+    if getattr(spotapi_client, "_spotdl_secret_cache_patched", False):
+        return
+
+    original_get_latest_totp_secret = spotapi_client.get_latest_totp_secret
+    lock = threading.Lock()
+    cached_secret: Optional[Tuple[int, bytearray]] = None
+    cache_expiry = 0.0
+
+    def get_latest_totp_secret() -> Tuple[int, bytearray]:
+        nonlocal cached_secret, cache_expiry
+
+        with lock:
+            now = time.monotonic()
+            if cached_secret is not None and now < cache_expiry:
+                return cached_secret
+
+            cached_secret = original_get_latest_totp_secret()
+            cache_expiry = now + SPOTAPI_SECRET_CACHE_TTL
+
+            return cached_secret
+
+    spotapi_client.get_latest_totp_secret = get_latest_totp_secret
+    spotapi_client._spotdl_secret_cache_patched = True  # pylint: disable=W0212
 
 
 class SpotifyError(Exception):
@@ -252,6 +295,7 @@ class SpotifyClient:
         if use_official_api:
             cls._instance = _init_official_spotify_client(**kwargs)
         else:
+            _cache_spotapi_fallback_secret()
             cls._instance = _init_free_spotify_client(**kwargs)
 
         cls._use_official_api = use_official_api
