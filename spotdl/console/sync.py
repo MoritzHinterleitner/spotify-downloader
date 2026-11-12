@@ -5,7 +5,7 @@ Sync module for the console.
 import json
 import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from spotdl.download.downloader import Downloader
 from spotdl.types.song import Song
@@ -16,6 +16,51 @@ from spotdl.utils.search import parse_query
 __all__ = ["sync"]
 
 logger = logging.getLogger(__name__)
+
+
+def _get_songs_from_sync_data(sync_data: Any) -> Dict[str, Song]:
+    """
+    Extract previously stored songs from sync data.
+
+    ### Arguments
+    - sync_data: parsed contents of a sync file
+
+    ### Returns
+    - mapping of song URL to full song metadata
+    """
+
+    if (
+        not isinstance(sync_data, dict)
+        or sync_data.get("type") != "sync"
+        or not isinstance(sync_data.get("songs"), list)
+    ):
+        return {}
+
+    return {
+        entry["url"]: Song.from_dict(entry)
+        for entry in sync_data["songs"]
+        if isinstance(entry, dict) and entry.get("url")
+    }
+
+
+def _load_songs_from_sync_file(save_path: str) -> Dict[str, Song]:
+    """
+    Load previously stored songs from a sync file, if it exists and is valid.
+
+    ### Arguments
+    - save_path: path to the sync file
+
+    ### Returns
+    - mapping of song URL to full song metadata
+    """
+
+    try:
+        with open(save_path, "r", encoding="utf-8") as sync_file:
+            sync_data = json.load(sync_file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return _get_songs_from_sync_data(sync_data)
 
 
 def sync(
@@ -49,6 +94,8 @@ def sync(
                 "Cannot create a sync file with a .spotdl file in the query."
             )
 
+        existing_songs = _load_songs_from_sync_file(save_path)
+
         # Parse the query
         songs_list = parse_query(
             query=query,
@@ -59,6 +106,7 @@ def sync(
             playlist_retain_track_cover=downloader.settings[
                 "playlist_retain_track_cover"
             ],
+            existing_songs=existing_songs,
         )
 
         # Create sync file
@@ -111,11 +159,7 @@ def sync(
             raise ValueError("Sync file is not a valid sync file.")
 
         # Reuse metadata from the previous sync instead of requesting it again
-        existing_songs = {
-            entry["url"]: Song.from_dict(entry)
-            for entry in sync_data["songs"]
-            if entry.get("url")
-        }
+        existing_songs = _get_songs_from_sync_data(sync_data)
 
         # Parse the query
         songs_playlist = parse_query(
