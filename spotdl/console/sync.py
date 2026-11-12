@@ -124,10 +124,8 @@ def sync(
             )
         logger.info("Saved sync file with %d songs", len(songs_list))
 
-        # Perform initial download
-        downloader.download_multiple_songs(songs_list)
-
-        # Create m3u file
+        # Create m3u file before downloading, so it is available even if a
+        # download fails or the command is interrupted
         if m3u_file:
             gen_m3u_files(
                 songs_list,
@@ -137,6 +135,9 @@ def sync(
                 downloader.settings["restrict"],
                 False,
             )
+
+        # Perform initial download
+        downloader.download_multiple_songs(songs_list)
 
         return None
 
