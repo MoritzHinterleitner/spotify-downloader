@@ -107,6 +107,53 @@ def test_song_from_url():
     assert isinstance(song.popularity, int)
 
 
+def test_song_from_url_handles_missing_artist_and_album_metadata(mocker):
+    """
+    Tests that Song.from_url() falls back to track metadata when the separate
+    artist/album requests return None instead of raising a TypeError.
+    """
+
+    track = {
+        "name": "Big Dawgs (feat. Kalmi)",
+        "duration_ms": 190000,
+        "artists": [{"id": "artist-id", "name": "Hanumankind"}],
+        "album": {
+            "id": "album-id",
+            "name": "Monsoon Season",
+            "artists": [{"name": "Hanumankind"}],
+            "images": [{"url": "cover-url", "width": 640, "height": 640}],
+            "release_date": "2025-07-25",
+            "total_tracks": 12,
+            "album_type": "album",
+        },
+        "disc_number": 1,
+        "track_number": 2,
+        "explicit": True,
+        "id": "track-id",
+        "external_urls": {"spotify": "https://open.spotify.com/track/track-id"},
+    }
+
+    spotify_client = mocker.Mock()
+    spotify_client.track.return_value = track
+    spotify_client.artist.return_value = None
+    spotify_client.album.return_value = None
+    mocker.patch("spotdl.types.song.SpotifyClient", return_value=spotify_client)
+
+    song = Song.from_url("https://open.spotify.com/track/track-id")
+
+    assert song.name == "Big Dawgs (feat. Kalmi)"
+    assert song.artists == ["Hanumankind"]
+    assert song.album_name == "Monsoon Season"
+    assert song.album_artist == "Hanumankind"
+    assert song.album_type == "album"
+    assert song.disc_count == 1
+    assert song.year == 2025
+    assert song.tracks_count == 12
+    assert song.cover_url == "cover-url"
+    assert song.genres == []
+    assert song.publisher == ""
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="SpotipyFree reports every release as an album and doesn't fetch ISRCs",
@@ -171,8 +218,7 @@ def test_song_from_data_dump():
     """
 
     # Loads from str
-    song = Song.from_data_dump(
-        """
+    song = Song.from_data_dump("""
         {
             "name": "Ropes",
             "artists": ["Dirty Palm", "Chandler Jewels"],
@@ -199,8 +245,7 @@ def test_song_from_data_dump():
             "url": "https://open.spotify.com/track/1t2qKa8K72IBC8yQlhD9bU",
             "popularity": 0
         }
-        """
-    )
+        """)
 
     assert song.name == "Ropes"
     assert song.artists == ["Dirty Palm", "Chandler Jewels"]
