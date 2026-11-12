@@ -9,6 +9,7 @@ import concurrent.futures
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -132,7 +133,7 @@ def parse_query(
 
     results = []
     total_songs = len(songs)
-    progress_interval = max(1, total_songs // 10)
+    start_time = time.monotonic()
 
     if total_songs > 0:
         logger.info(
@@ -143,19 +144,40 @@ def parse_query(
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
         future_to_song = {executor.submit(reinit_song, song): song for song in songs}
-        for index, future in enumerate(
-            concurrent.futures.as_completed(future_to_song), start=1
-        ):
-            song = future_to_song[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                logger.error("%s generated an exception: %s", song.display_name, exc)
+        remaining = set(future_to_song)
+        completed = 0
+        last_progress_log = start_time
 
-            if total_songs >= 10 and (
-                index == total_songs or index % progress_interval == 0
-            ):
-                logger.info("Fetched metadata for %d/%d songs", index, total_songs)
+        while remaining:
+            done, remaining = concurrent.futures.wait(
+                remaining,
+                timeout=5,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+
+            for future in done:
+                song = future_to_song[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    logger.error(
+                        "%s generated an exception: %s", song.display_name, exc
+                    )
+
+                completed += 1
+
+            now = time.monotonic()
+            if done and (completed == total_songs or now - last_progress_log >= 5):
+                logger.info("Fetched metadata for %d/%d songs", completed, total_songs)
+                last_progress_log = now
+            elif not done:
+                logger.info(
+                    "Still fetching metadata... %d/%d songs complete (%ds)",
+                    completed,
+                    total_songs,
+                    int(now - start_time),
+                )
+                last_progress_log = now
 
     return results
 
