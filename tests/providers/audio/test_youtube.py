@@ -140,6 +140,51 @@ def test_yt_get_results_cleans_channel_names(mocker):
     assert results[1].artists == ("Another Artist",)
 
 
+def test_yt_search_excludes_failed_urls(mocker):
+    provider = YouTube()
+    results = [
+        Result(
+            source="YouTube",
+            url="https://www.youtube.com/watch?v=first",
+            verified=False,
+            name="Abstrakt - Nobody Else",
+            duration=162,
+            author="Abstrakt",
+            artists=("Abstrakt",),
+            views=1000,
+            result_id="first",
+        ),
+        Result(
+            source="YouTube",
+            url="https://www.youtube.com/watch?v=second",
+            verified=False,
+            name="Abstrakt - Nobody Else",
+            duration=162,
+            author="Abstrakt",
+            artists=("Abstrakt",),
+            views=1000,
+            result_id="second",
+        ),
+    ]
+    mocker.patch.object(provider, "get_results", return_value=results)
+
+    song = Song.from_missing_data(
+        name="Nobody Else",
+        artists=["Abstrakt"],
+        artist="Abstrakt",
+        album_name="Nobody Else",
+        album_artist="Abstrakt",
+        duration=162,
+        explicit=False,
+    )
+
+    first_url = provider.search(song)
+    assert first_url == results[0].url
+
+    second_url = provider.search(song, exclude_urls={first_url})
+    assert second_url == results[1].url
+
+
 def test_yt_get_best_result_prefers_popular_upload(mocker):
     mocker.patch("spotdl.providers.audio.youtube.YoutubeDL.extract_info")
     provider = YouTube()

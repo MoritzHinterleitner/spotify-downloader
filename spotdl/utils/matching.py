@@ -794,6 +794,11 @@ def order_results(
     # Assign an overall avg match value to each result
     links_with_match_value = {}
 
+    max_views = max((result.views or 0 for result in results), default=0)
+    # A result with an unusually high view count is treated as a strong signal
+    # even if its title/artist/duration match is imperfect.
+    popular_view_threshold = max(100_000, int(max_views * 0.01))
+
     # Iterate over all results
     for result in results:
         debug(
@@ -880,8 +885,17 @@ def order_results(
         time_match = calc_time_match(song, result)
         debug(song.song_id, result.result_id, f"Final time match: {time_match}")
 
+        # Very popular results are accepted even when their title, artist or
+        # duration match is imperfect. The high view count is treated as a
+        # strong signal that this is the official/right upload.
+        is_popular = (
+            result.views is not None
+            and result.views >= popular_view_threshold
+            and name_match >= 30
+        )
+
         # Ignore results with name match lower than 60%
-        if name_match <= 60:
+        if name_match <= 60 and not is_popular:
             debug(
                 song.song_id,
                 result.result_id,
@@ -890,7 +904,7 @@ def order_results(
             continue
 
         # Ignore results with artists match lower than 70%
-        if artists_match < 70 and result.source != "slider.kz":
+        if artists_match < 70 and result.source != "slider.kz" and not is_popular:
             debug(
                 song.song_id,
                 result.result_id,
@@ -918,7 +932,7 @@ def order_results(
             )
 
         # Skip results with time match lower than 25%
-        if time_match < 25:
+        if time_match < 25 and not is_popular:
             debug(
                 song.song_id,
                 result.result_id,
@@ -929,7 +943,7 @@ def order_results(
         # If the time match is lower than 50%
         # and the average match is lower than 75%
         # we skip the result
-        if time_match < 50 and average_match < 75:
+        if time_match < 50 and average_match < 75 and not is_popular:
             debug(
                 song.song_id,
                 result.result_id,
@@ -937,7 +951,20 @@ def order_results(
             )
             continue
 
-        if (
+        if is_popular:
+            # A very popular result is treated as a top match
+            average_match = max(average_match, 100)
+            if (result.explicit is not None and song.explicit is not None) and (
+                result.explicit != song.explicit
+            ):
+                debug(
+                    song.song_id,
+                    result.result_id,
+                    "Lowering average match due to explicit mismatch",
+                )
+
+                average_match -= 5
+        elif (
             (not result.isrc_search and average_match <= 85)
             or result.source == "slider.kz"
             or time_match < 0

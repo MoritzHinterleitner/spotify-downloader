@@ -12,7 +12,7 @@ import sys
 import traceback
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, List, Optional, Set, Tuple, Type, Union
 
 from yt_dlp.postprocessor.modify_chapters import ModifyChaptersPP
 from yt_dlp.postprocessor.sponsorblock import SponsorBlockPP
@@ -20,6 +20,7 @@ from yt_dlp.postprocessor.sponsorblock import SponsorBlockPP
 from spotdl.download.progress_handler import ProgressHandler
 from spotdl.providers.audio import (
     AudioProvider,
+    AudioProviderError,
     BandCamp,
     Piped,
     SoundCloud,
@@ -394,19 +395,22 @@ class Downloader:
         async with self.semaphore:
             return await self.async_search_and_download(song)
 
-    def search(self, song: Song) -> str:
+    def search(self, song: Song, exclude_urls: Optional[Set[str]] = None) -> str:
         """
         Search for a song using all available providers.
 
         ### Arguments
         - song: The song to search for.
+        - exclude_urls: URLs that should be ignored (e.g. failed downloads).
 
         ### Returns
         - tuple with download url and audio provider if successful.
         """
 
         for audio_provider in self.audio_providers:
-            url = audio_provider.search(song, self.settings["only_verified_results"])
+            url = audio_provider.search(
+                song, self.settings["only_verified_results"], exclude_urls
+            )
             if url:
                 return url
 
@@ -724,21 +728,53 @@ class Downloader:
                 display_progress_tracker.yt_dlp_progress_hook
             )
 
+            excluded_urls: Set[str] = set()
             if song.download_url is None:
                 display_progress_tracker.notify_searching()
-                download_url = await loop.run_in_executor(None, self.search, song)
+                download_url = await loop.run_in_executor(
+                    None, lambda: self.search(song, excluded_urls)
+                )
             else:
                 download_url = song.download_url
 
+            if download_url is None:
+                raise LookupError(f"No results found for song: {song.display_name}")
+
             display_progress_tracker.notify_getting_meta()
 
-            logger.debug("Downloading %s using %s", song.display_name, download_url)
-            download_info = await loop.run_in_executor(
-                None,
-                lambda: audio_downloader.get_download_metadata(
-                    download_url, download=True
-                ),
-            )
+            download_info = None
+            max_download_attempts = 3
+            for attempt in range(max_download_attempts):
+                excluded_urls.add(download_url)
+
+                logger.debug("Downloading %s using %s", song.display_name, download_url)
+
+                try:
+                    download_info = await loop.run_in_executor(
+                        None,
+                        lambda: audio_downloader.get_download_metadata(
+                            download_url, download=True
+                        ),
+                    )
+                    break
+                except AudioProviderError:
+                    if attempt == max_download_attempts - 1:
+                        raise
+
+                    logger.info(
+                        "Download failed for %s, trying another result",
+                        song.display_name,
+                    )
+
+                    display_progress_tracker.notify_searching()
+                    download_url = await loop.run_in_executor(
+                        None, lambda: self.search(song, excluded_urls)
+                    )
+
+                    if download_url is None:
+                        raise
+
+                    display_progress_tracker.notify_getting_meta()
 
             if download_info is None:
                 logger.debug(
@@ -839,9 +875,9 @@ class Downloader:
 
             download_info["filepath"] = str(output_file)
 
-            # Set the song's download url
-            if song.download_url is None:
-                song.download_url = download_url
+            # Record the URL that was actually used. This also replaces a failed
+            # preloaded/custom mapping with the fallback result.
+            song.download_url = download_url
 
             display_progress_tracker.notify_conversion_complete()
 

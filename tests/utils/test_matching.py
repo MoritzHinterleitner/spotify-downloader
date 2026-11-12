@@ -236,3 +236,49 @@ def test_calc_album_match_without_song_album(mocker):
     result = mocker.Mock(album="Album")
 
     assert calc_album_match(song, result) == 0.0
+
+
+def test_order_results_accepts_very_popular_result():
+    """
+    A result with a very high view count is kept even if its title, artist and
+    duration match are poor.
+    """
+
+    song = Song.from_missing_data(
+        name="James Bond Theme",
+        artists=["John Barry"],
+        artist="John Barry",
+        album_name="Dr. No",
+        album_artist="John Barry",
+        duration=107,
+        explicit=False,
+    )
+
+    exact = Result(
+        source="YouTubeMusic",
+        url="https://www.youtube.com/watch?v=exact",
+        verified=False,
+        name="James Bond Theme",
+        duration=107,
+        author="John Barry",
+        artists=("John Barry",),
+        views=1000,
+        result_id="exact",
+    )
+    popular = Result(
+        source="YouTubeMusic",
+        url="https://www.youtube.com/watch?v=popular",
+        verified=False,
+        name="James Bond Theme (Live)",
+        duration=174,
+        author="TheAmericanGazette",
+        artists=("TheAmericanGazette",),
+        views=50_000_000,
+        result_id="popular",
+    )
+
+    ordered = order_results([exact, popular], song)
+
+    assert exact in ordered
+    assert popular in ordered
+    assert ordered[popular] >= 80

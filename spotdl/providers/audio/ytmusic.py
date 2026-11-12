@@ -38,6 +38,39 @@ def is_view_count(name: str) -> bool:
     return VIEW_COUNT_REGEX.match(" ".join(name.split())) is not None
 
 
+def parse_view_count(views: str) -> int:
+    """
+    Parse a YouTube Music view count string into an integer.
+
+    YouTube Music is queried with language="de", so the value can use German
+    number formatting, e.g. "185.020", "1,2 Mio." or "3,4 Mrd.".
+
+    ### Arguments
+    - views: The view count string.
+
+    ### Returns
+    - The parsed number of views, or 0 if it could not be parsed.
+    """
+
+    normalized = " ".join(str(views).split())
+    match = re.match(r"^([\d.,]+)\s*(Tsd\.|Mio\.|Mrd\.)?$", normalized)
+    if match is None:
+        return 0
+
+    number, suffix = match.groups()
+
+    try:
+        if suffix:
+            value = float(number.replace(".", "").replace(",", "."))
+            multiplier = {"Tsd.": 1_000, "Mio.": 1_000_000, "Mrd.": 1_000_000_000}
+
+            return int(value * multiplier[suffix])
+
+        return int(number.replace(".", "").replace(",", ""))
+    except ValueError:
+        return 0
+
+
 class YouTubeMusic(AudioProvider):
     """
     YouTube Music audio provider class
@@ -125,6 +158,7 @@ class YouTubeMusic(AudioProvider):
                         isrc_search=is_isrc_result,
                         search_query=search_term,
                         explicit=result.get("isExplicit"),
+                        views=parse_view_count(result.get("views") or ""),
                         album=(
                             result.get("album", {}).get("name")
                             if result.get("album")

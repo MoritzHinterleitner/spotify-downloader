@@ -1,7 +1,7 @@
 import pytest
 
 from spotdl.providers.audio import YouTubeMusic
-from spotdl.providers.audio.ytmusic import is_view_count
+from spotdl.providers.audio.ytmusic import is_view_count, parse_view_count
 from spotdl.types.song import Song
 
 
@@ -82,6 +82,26 @@ def test_ytm_get_results_retries_with_new_client(mocker):
     assert second_client.search.call_count == 1
 
 
+def test_ytm_get_results_parses_views(mocker):
+    client = mocker.Mock()
+    client.search.return_value = [
+        {
+            "videoId": "video_0",
+            "resultType": "video",
+            "title": "Test Song",
+            "artists": [{"name": "Test Artist"}],
+            "duration": "1:23",
+            "views": "2,1\xa0Mio.",
+        }
+    ]
+    mocker.patch("spotdl.providers.audio.ytmusic.YTMusic", return_value=client)
+
+    provider = YouTubeMusic()
+    results = provider.get_results("Test Song", filter="videos")
+
+    assert results[0].views == 2_100_000
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -102,6 +122,23 @@ def test_is_view_count(name):
 )
 def test_is_not_view_count(name):
     assert not is_view_count(name)
+
+
+@pytest.mark.parametrize(
+    "views, expected",
+    [
+        ("3052", 3052),
+        ("185.020", 185020),
+        ("650.908", 650908),
+        ("1,2\xa0Mio.", 1_200_000),
+        ("3,4 Mrd.", 3_400_000_000),
+        ("2 Tsd.", 2_000),
+        ("not a number", 0),
+        ("", 0),
+    ],
+)
+def test_parse_view_count(views, expected):
+    assert parse_view_count(views) == expected
 
 
 def test_ytm_get_results_drops_view_count_artists(mocker):

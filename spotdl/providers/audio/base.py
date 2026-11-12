@@ -6,7 +6,7 @@ import logging
 import re
 import shlex
 from math import log10
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from yt_dlp import YoutubeDL
 
@@ -66,6 +66,22 @@ class YTDLLogger:
 
 
 ISRC_REGEX = re.compile(r"^[A-Z]{2}-?\w{3}-?\d{2}-?\d{5}$")
+YOUTUBE_ID_REGEX = re.compile(r"(?:[?&]v=|youtu\.be/)([A-Za-z0-9_-]+)")
+
+
+def get_youtube_id(url: str) -> Optional[str]:
+    """
+    Extract a YouTube video id from a URL.
+
+    ### Arguments
+    - url: The URL to extract the id from.
+
+    ### Returns
+    - The video id, or None if it could not be found.
+    """
+
+    match = YOUTUBE_ID_REGEX.search(url)
+    return match.group(1) if match else None
 
 
 class AudioProvider:
@@ -164,16 +180,37 @@ class AudioProvider:
 
         return data["view_count"]
 
-    def search(self, song: Song, only_verified: bool = False) -> Optional[str]:
+    def search(
+        self,
+        song: Song,
+        only_verified: bool = False,
+        exclude_urls: Optional[Set[str]] = None,
+    ) -> Optional[str]:
         """
         Search for a song and return best match.
 
         ### Arguments
         - song: The song to search for.
+        - only_verified: Whether to only return verified results.
+        - exclude_urls: URLs that should be ignored (e.g. failed downloads).
 
         ### Returns
         - The url of the best match or None if no match was found.
         """
+
+        exclude_urls = exclude_urls or set()
+        excluded_ids = {
+            video_id
+            for video_id in (get_youtube_id(url) for url in exclude_urls)
+            if video_id is not None
+        }
+
+        def is_excluded(result: Result) -> bool:
+            if result.url in exclude_urls:
+                return True
+
+            video_id = get_youtube_id(result.url)
+            return video_id is not None and video_id in excluded_ids
 
         # Create initial search query
         search_query = create_song_title(song.name, song.artists).lower()
@@ -189,6 +226,11 @@ class AudioProvider:
         # search for song using isrc if it's available
         if song.isrc and self.SUPPORTS_ISRC and not self.search_query:
             isrc_results = self.get_results(song.isrc)
+
+            if exclude_urls:
+                isrc_results = [
+                    result for result in isrc_results if not is_excluded(result)
+                ]
 
             if only_verified:
                 isrc_results = [result for result in isrc_results if result.verified]
@@ -250,6 +292,11 @@ class AudioProvider:
             # Query YTM by songs only first, this way if we get correct result on the first try
             # we don't have to make another request
             search_results = self.get_results(search_query, **options)
+
+            if exclude_urls:
+                search_results = [
+                    result for result in search_results if not is_excluded(result)
+                ]
 
             if only_verified:
                 search_results = [
