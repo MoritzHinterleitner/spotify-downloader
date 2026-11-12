@@ -76,6 +76,33 @@ def get_search_results(search_term: str) -> List[Song]:
     return Song.list_from_search_term(search_term)
 
 
+def _get_spotify_song_key(song: Song) -> Optional[str]:
+    """
+    Get a stable key for matching songs across queries.
+
+    Prefers the Spotify song id, falls back to the track id from the URL and
+    finally to the URL itself (for non-Spotify URLs).
+
+    ### Arguments
+    - song: the song to create the key for
+
+    ### Returns
+    - the key used to identify the song
+    """
+
+    if song.song_id:
+        return song.song_id
+
+    if song.url:
+        match = re.search(
+            r"open\.spotify\.com/(?:intl-\w+/)?track/([A-Za-z0-9]+)", song.url
+        )
+        if match:
+            return match.group(1)
+
+    return song.url
+
+
 def parse_query(
     query: List[str],
     threads: int = 1,
@@ -136,6 +163,8 @@ def get_simple_songs(
 
     songs: List[Song] = []
     lists: List[SongList] = []
+    mapped_songs: List[Song] = []
+    mappings: Dict[Optional[str], Song] = {}
     for request in query:
         logger.info("Processing query: %s", request)
 
@@ -168,9 +197,17 @@ def get_simple_songs(
                     'Incorrect format used, please use "YouTubeURL|SpotifyURL"'
                 )
 
-            songs.append(
-                Song.from_missing_data(url=split_urls[1], download_url=split_urls[0])
+            mapped_song = Song.from_missing_data(
+                url=split_urls[1], download_url=split_urls[0]
             )
+            mapped_key = _get_spotify_song_key(mapped_song)
+            if mapped_key in mappings:
+                # Keep the last mapping for a given Spotify URL
+                mappings[mapped_key].download_url = split_urls[0]
+            else:
+                mappings[mapped_key] = mapped_song
+                mapped_songs.append(mapped_song)
+                songs.append(mapped_song)
         elif "music.youtube.com/watch?v" in request:
             track_data = get_ytm_client().get_song(request.split("?v=", 1)[1])
 
@@ -336,6 +373,33 @@ def get_simple_songs(
                     song_data["album_artist"] = song_list.author_name
 
             songs.append(Song.from_dict(song_data))
+
+    # Merge custom YouTube mappings with matching songs from other queries.
+    # Without this, a mapped song that is also part of a playlist/album is kept
+    # as a separate entry, which duplicates it in generated m3u files and makes
+    # it download twice.
+    if mapped_songs:
+        mapped_song_ids = {id(mapped_song) for mapped_song in mapped_songs}
+        matched_keys = set()
+
+        for song in songs:
+            if id(song) in mapped_song_ids:
+                continue
+
+            key = _get_spotify_song_key(song)
+            if key not in mappings:
+                continue
+
+            song.download_url = mappings[key].download_url
+            matched_keys.add(key)
+
+        if matched_keys:
+            songs = [
+                song
+                for song in songs
+                if id(song) not in mapped_song_ids
+                or _get_spotify_song_key(song) not in matched_keys
+            ]
 
     # removing songs for --ignore-albums
     original_length = len(songs)

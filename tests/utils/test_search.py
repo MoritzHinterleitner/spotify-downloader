@@ -1,5 +1,6 @@
 import pytest
 
+from spotdl.types.playlist import Playlist
 from spotdl.types.saved import SavedError
 from spotdl.types.song import Song, SongListError
 from spotdl.utils.search import get_search_results, get_simple_songs, parse_query
@@ -107,3 +108,39 @@ def test_get_simple_songs_skips_missing_video_details(monkeypatch):
     songs = get_simple_songs(["https://music.youtube.com/watch?v=dQw4w9WgXcQ"])
 
     assert songs == []
+
+
+def test_custom_mapping_does_not_duplicate_playlist_songs(monkeypatch):
+    track_url = "https://open.spotify.com/track/4B2kkxg3wKSTZw5JPaUtzQ"
+    mapped_url = "https://www.youtube.com/watch?v=BZKwsPIhVO8"
+    playlist_song = Song.from_missing_data(
+        name="Test song",
+        artists=["Test artist"],
+        artist="Test artist",
+        song_id="4B2kkxg3wKSTZw5JPaUtzQ",
+        url=track_url,
+    )
+    playlist = Playlist(
+        name="Test playlist",
+        url=PLAYLIST[0],
+        urls=[track_url],
+        songs=[playlist_song],
+        description="",
+        author_url="",
+        author_name="",
+        cover_url="",
+    )
+
+    monkeypatch.setattr(
+        "spotdl.utils.search.Playlist.from_url",
+        lambda *_args, **_kwargs: playlist,
+    )
+
+    songs = get_simple_songs(
+        [PLAYLIST[0], f"{mapped_url}|{track_url}?si=b5c0790edc8f4904"]
+    )
+
+    assert len(songs) == 1
+    assert songs[0].url == track_url
+    assert songs[0].list_name == playlist.name
+    assert songs[0].download_url == mapped_url
